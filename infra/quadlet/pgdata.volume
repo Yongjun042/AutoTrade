@@ -1,0 +1,7 @@
+[Unit]
+Description=Tradebot Postgres Volume
+
+[Volume]
+
+[Install]
+WantedBy=default.target

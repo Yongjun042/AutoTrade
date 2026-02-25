@@ -1,0 +1,37 @@
+# ================================================
+# Policy: Neutral (중립) - Default
+# ================================================
+# Target: Normal operation, balanced risk/reward
+# Principle: Standard operating mode
+
+universe:
+  allow_markets:
+    - KOSPI
+    - KOSDAQ
+  allow_assets:
+    - EQUITY
+    - ETF
+  deny_symbols: []
+
+risk:
+  max_gross_exposure_pct: 60
+  max_position_pct_per_symbol: 10
+  max_open_positions: 10
+  max_orders_per_day: 40
+  max_daily_loss_pct: 1.5
+  max_drawdown_pct: 8.0
+  require_cash_buffer_pct: 10
+
+execution:
+  prefer_order_type: LIMIT
+  max_spread_bps: 30
+  min_avg_daily_value_krw: 1000000000
+  cooldown_seconds_after_trade: 60
+  max_slippage_bps_est: 20
+  cancel_if_not_acked_sec: 8
+
+budget:
+  max_ai_calls_per_day: 200
+  max_ai_cost_est_krw_per_day: 3000
+  max_kis_rest_calls_per_day: 20000
+  kill_switch_on_budget_exceeded: true

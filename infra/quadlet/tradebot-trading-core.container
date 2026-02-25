@@ -1,0 +1,50 @@
+[Unit]
+Description=Tradebot Trading Core (KIS gateway + policy/risk + order engine)
+After=tradebot-postgres.container tradebot-redis.container
+Requires=tradebot-postgres.container tradebot-redis.container
+
+[Container]
+Image=localhost/trading-core:0.1
+ContainerName=trading-core
+
+Network=tradebot.network
+NetworkAlias=trading-core
+
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=NODE_ENV=production
+Environment=TZ=Asia/Seoul
+Environment=PORT=8080
+
+Environment=DB_HOST=postgres
+Environment=DB_PORT=5432
+Environment=DB_USER=tradebot
+Environment=DB_PASSWORD=CHANGE_ME_STRONG_PASSWORD
+Environment=DB_NAME=tradebot
+
+Environment=REDIS_URL=redis://redis:6379
+
+# KIS Configuration (FILL THESE IN)
+Environment=KIS_APP_KEY=CHANGE_ME
+Environment=KIS_APP_SECRET=CHANGE_ME
+Environment=KIS_ACCOUNT_NO=CHANGE_ME
+Environment=KIS_ENV=REAL
+Environment=KIS_REST_RPS=20
+
+# Safety
+Environment=KILL_SWITCH_DEFAULT=true
+
+# Publish to localhost only
+PublishPort=127.0.0.1:18080:8080
+
+HealthCmd=curl -f http://localhost:8080/health || exit 1
+HealthInterval=30s
+HealthTimeout=5s
+HealthRetries=3
+
+[Service]
+Restart=always
+RestartSec=5
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

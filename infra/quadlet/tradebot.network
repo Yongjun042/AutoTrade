@@ -1,0 +1,8 @@
+[Unit]
+Description=Tradebot Network
+
+[Network]
+Driver=bridge
+
+[Install]
+WantedBy=default.target

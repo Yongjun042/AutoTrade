@@ -1,0 +1,37 @@
+# ================================================
+# Policy: Aggressive (공격)
+# ================================================
+# Target: After sufficient validation, increased capital deployment
+# Warning: Higher volatility, requires mature system
+
+universe:
+  allow_markets:
+    - KOSPI
+    - KOSDAQ
+  allow_assets:
+    - EQUITY
+    - ETF
+  deny_symbols: []
+
+risk:
+  max_gross_exposure_pct: 85
+  max_position_pct_per_symbol: 15
+  max_open_positions: 15
+  max_orders_per_day: 120
+  max_daily_loss_pct: 2.5
+  max_drawdown_pct: 12.0
+  require_cash_buffer_pct: 5
+
+execution:
+  prefer_order_type: LIMIT
+  max_spread_bps: 50
+  min_avg_daily_value_krw: 500000000
+  cooldown_seconds_after_trade: 10
+  max_slippage_bps_est: 35
+  cancel_if_not_acked_sec: 10
+
+budget:
+  max_ai_calls_per_day: 800
+  max_ai_cost_est_krw_per_day: 10000
+  max_kis_rest_calls_per_day: 50000
+  kill_switch_on_budget_exceeded: true

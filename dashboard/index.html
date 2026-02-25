@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutoTrade Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --text-primary: #f0f6fc;
+            --text-secondary: #8b949e;
+            --accent-green: #3fb950;
+            --accent-red: #f85149;
+            --accent-yellow: #d29922;
+            --accent-blue: #58a6ff;
+            --border-color: #30363d;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        .header {
+            background: var(--bg-secondary);
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .header .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--accent-red);
+        }
+
+        .status-dot.connected {
+            background: var(--accent-green);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .container {
+            padding: 24px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .card-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .metric {
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .metric.green { color: var(--accent-green); }
+        .metric.red { color: var(--accent-red); }
+        .metric.yellow { color: var(--accent-yellow); }
+        .metric.blue { color: var(--accent-blue); }
+
+        .metric-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .progress-bar {
+            height: 8px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+
+        .progress-fill.green { background: var(--accent-green); }
+        .progress-fill.yellow { background: var(--accent-yellow); }
+        .progress-fill.red { background: var(--accent-red); }
+
+        .kill-switch {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .kill-switch-btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .kill-switch-btn.active {
+            background: var(--accent-red);
+            color: white;
+        }
+
+        .kill-switch-btn.inactive {
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+        }
+
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .table th, .table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .table th {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+
+        .table td {
+            font-size: 14px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .badge.pending { background: var(--bg-tertiary); color: var(--text-secondary); }
+        .badge.approved { background: rgba(63, 185, 80, 0.2); color: var(--accent-green); }
+        .badge.rejected { background: rgba(248, 81, 73, 0.2); color: var(--accent-red); }
+        .badge.filled { background: rgba(88, 166, 255, 0.2); color: var(--accent-blue); }
+        .badge.error { background: rgba(210, 153, 34, 0.2); color: var(--accent-yellow); }
+
+        .timestamp {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-secondary);
+        }
+
+        .last-updated {
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-align: right;
+            margin-top: 16px;
+        }
+
+        .policy-selector {
+            display: flex;
+            gap: 8px;
+        }
+
+        .policy-btn {
+            padding: 6px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            background: transparent;
+            color: var(--text-secondary);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .policy-btn.active {
+            background: var(--accent-blue);
+            border-color: var(--accent-blue);
+            color: white;
+        }
+
+        .policy-btn:hover:not(.active) {
+            background: var(--bg-tertiary);
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🤖 AutoTrade Dashboard</h1>
+        <div class="status-indicator">
+            <div class="status-dot" id="connectionStatus"></div>
+            <span id="connectionText">Connecting...</span>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Status Cards -->
+        <div class="grid">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Kill Switch</span>
+                </div>
+                <div class="kill-switch">
+                    <button class="kill-switch-btn inactive" id="killSwitchBtn" onclick="toggleKillSwitch()">
+                        Activate
+                    </button>
+                    <span id="killSwitchStatus">Inactive - Trading Enabled</span>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Budget - AI Calls</span>
+                </div>
+                <div class="metric blue" id="aiCallsMetric">0 / 200</div>
+                <div class="metric-label">Today's AI Calls</div>
+                <div class="progress-bar">
+                    <div class="progress-fill blue" id="aiCallsProgress" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Budget - Orders</span>
+                </div>
+                <div class="metric" id="ordersMetric">0 / 40</div>
+                <div class="metric-label">Today's Orders</div>
+                <div class="progress-bar">
+                    <div class="progress-fill green" id="ordersProgress" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Policy Preset</span>
+                </div>
+                <div class="policy-selector">
+                    <button class="policy-btn" data-policy="conservative">Conservative</button>
+                    <button class="policy-btn active" data-policy="neutral">Neutral</button>
+                    <button class="policy-btn" data-policy="aggressive">Aggressive</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Positions and Intents -->
+        <div class="grid">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Recent Intents</span>
+                </div>
+                <div id="intentsTable">
+                    <div class="empty-state">No intents yet</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Recent Orders</span>
+                </div>
+                <div id="ordersTable">
+                    <div class="empty-state">No orders yet</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">Order Events Log</span>
+            </div>
+            <div id="eventsTable">
+                <div class="empty-state">No events yet</div>
+            </div>
+        </div>
+
+        <div class="last-updated">
+            Last updated: <span id="lastUpdated">-</span>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+        let autoRefresh = true;
+        let refreshInterval;
+
+        // Connection check
+        async function checkConnection() {
+            try {
+                const response = await fetch(`${API_BASE}/health`);
+                if (response.ok) {
+                    document.getElementById('connectionStatus').classList.add('connected');
+                    document.getElementById('connectionText').textContent = 'Connected';
+                    return true;
+                }
+            } catch (e) {
+                document.getElementById('connectionStatus').classList.remove('connected');
+                document.getElementById('connectionText').textContent = 'Disconnected';
+            }
+            return false;
+        }
+
+        // Fetch and update data
+        async function fetchData() {
+            const connected = await checkConnection();
+            if (!connected) {
+                document.getElementById('connectionStatus').classList.remove('connected');
+                document.getElementById('connectionText').textContent = 'Disconnected';
+                return;
+            }
+
+            try {
+                // Fetch budget status
+                const budgetRes = await fetch(`${API_BASE}/api/budget`);
+                if (budgetRes.ok) {
+                    const budget = await budgetRes.json();
+                    updateBudgetStatus(budget);
+                }
+
+                // Fetch intents
+                const intentsRes = await fetch(`${API_BASE}/api/intents`);
+                if (intentsRes.ok) {
+                    const intents = await intentsRes.json();
+                    updateIntentsTable(intents);
+                }
+
+                // Fetch orders
+                const ordersRes = await fetch(`${API_BASE}/api/orders`);
+                if (ordersRes.ok) {
+                    const orders = await ordersRes.json();
+                    updateOrdersTable(orders);
+                }
+
+                document.getElementById('lastUpdated').textContent = new Date().toLocaleString('ko-KR');
+            } catch (e) {
+                console.error('Error fetching data:', e);
+            }
+        }
+
+        function updateBudgetStatus(budget) {
+            // AI Calls
+            const aiCallsPct = (budget.aiCalls / budget.aiCallsLimit) * 100;
+            document.getElementById('aiCallsMetric').textContent = `${budget.aiCalls} / ${budget.aiCallsLimit}`;
+            document.getElementById('aiCallsProgress').style.width = `${aiCallsPct}%`;
+            document.getElementById('aiCallsProgress').className = `progress-fill ${aiCallsPct > 80 ? 'red' : aiCallsPct > 50 ? 'yellow' : 'blue'}`;
+
+            // Orders
+            const ordersPct = (budget.orders / budget.ordersLimit) * 100;
+            document.getElementById('ordersMetric').textContent = `${budget.orders} / ${budget.ordersLimit}`;
+            document.getElementById('ordersProgress').style.width = `${ordersPct}%`;
+            document.getElementById('ordersProgress').className = `progress-fill ${ordersPct > 80 ? 'red' : ordersPct > 50 ? 'yellow' : 'green'}`;
+
+            // Kill Switch
+            const killSwitchBtn = document.getElementById('killSwitchBtn');
+            const killSwitchStatus = document.getElementById('killSwitchStatus');
+            if (budget.killSwitchActive) {
+                killSwitchBtn.textContent = 'Deactivate';
+                killSwitchBtn.className = 'kill-switch-btn active';
+                killSwitchStatus.textContent = 'Active - Trading Disabled';
+            } else {
+                killSwitchBtn.textContent = 'Activate';
+                killSwitchBtn.className = 'kill-switch-btn inactive';
+                killSwitchStatus.textContent = 'Inactive - Trading Enabled';
+            }
+        }
+
+        function updateIntentsTable(intents) {
+            const container = document.getElementById('intentsTable');
+            
+            if (!intents || intents.length === 0) {
+                container.innerHTML = '<div class="empty-state">No intents yet</div>';
+                return;
+            }
+
+            const recentIntents = intents.slice(0, 10);
+            
+            container.innerHTML = `
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Strategy</th>
+                            <th>Symbol</th>
+                            <th>Side</th>
+                            <th>Qty</th>
+                            <th>Status</th>
+                            <th>Time</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${recentIntents.map(intent => `
+                            <tr>
+                                <td>${intent.strategyId || '-'}</td>
+                                <td>${intent.symbol || '-'}</td>
+                                <td class="${intent.side === 'BUY' ? 'green' : 'red'}">${intent.side || '-'}</td>
+                                <td>${intent.intentQty || '-'}</td>
+                                <td><span class="badge ${(intent.status || '').toLowerCase()}">${intent.status || '-'}</span></td>
+                                <td class="timestamp">${formatTime(intent.createdAt)}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        function updateOrdersTable(orders) {
+            const container = document.getElementById('ordersTable');
+            
+            if (!orders || orders.length === 0) {
+                container.innerHTML = '<div class="empty-state">No orders yet</div>';
+                return;
+            }
+
+            const recentOrders = orders.slice(0, 10);
+            
+            container.innerHTML = `
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Symbol</th>
+                            <th>Side</th>
+                            <th>Qty</th>
+                            <th>Filled</th>
+                            <th>State</th>
+                            <th>Time</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${recentOrders.map(order => `
+                            <tr>
+                                <td>${order.orderId || '-'}</td>
+                                <td>${order.symbol || '-'}</td>
+                                <td class="${order.side === 'BUY' ? 'green' : 'red'}">${order.side || '-'}</td>
+                                <td>${order.qty || 0}</td>
+                                <td>${order.filledQty || 0}</td>
+                                <td><span class="badge ${(order.state || '').toLowerCase().replace('_', '-')}">${order.state || '-'}</span></td>
+                                <td class="timestamp">${formatTime(order.createdAt)}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        function formatTime(dateStr) {
+            if (!dateStr) return '-';
+            const date = new Date(dateStr);
+            return date.toLocaleTimeString('ko-KR');
+        }
+
+        // Kill Switch toggle
+        async function toggleKillSwitch() {
+            const btn = document.getElementById('killSwitchBtn');
+            const isActive = btn.classList.contains('active');
+            const action = isActive ? 'deactivate' : 'activate';
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/killswitch/${action}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reason: 'Manual toggle from dashboard' })
+                });
+                
+                if (response.ok) {
+                    await fetchData();
+                }
+            } catch (e) {
+                console.error('Error toggling kill switch:', e);
+            }
+        }
+
+        // Policy selector
+        document.querySelectorAll('.policy-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                document.querySelectorAll('.policy-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                
+                // In production, would send policy change to server
+                console.log('Policy changed to:', btn.dataset.policy);
+            });
+        });
+
+        // Auto-refresh
+        function startAutoRefresh() {
+            if (refreshInterval) clearInterval(refreshInterval);
+            refreshInterval = setInterval(fetchData, 5000); // 5 seconds
+        }
+
+        // Initial load
+        checkConnection().then(connected => {
+            if (connected) {
+                fetchData();
+                startAutoRefresh();
+            }
+        });
+
+        // Pause on tab hidden
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                clearInterval(refreshInterval);
+            } else {
+                fetchData();
+                startAutoRefresh();
+            }
+        });
+    </script>
+</body>
+</html>

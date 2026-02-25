@@ -1,0 +1,28 @@
+[Unit]
+Description=Tradebot Redis
+After=tradebot.network
+Requires=tradebot.network
+
+[Container]
+Image=docker.io/library/redis:7
+ContainerName=tradebot-redis
+
+Network=tradebot.network
+NetworkAlias=redis
+
+Volume=redisdata.volume:/data
+
+Exec=redis-server --appendonly yes
+
+HealthCmd=redis-cli ping
+HealthInterval=10s
+HealthTimeout=3s
+HealthRetries=10
+
+[Service]
+Restart=always
+RestartSec=3
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

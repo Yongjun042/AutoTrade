@@ -1,0 +1,37 @@
+# ================================================
+# Policy: Conservative (보수)
+# ================================================
+# Target: Initial real trading, system stabilization period
+# Principle: Low risk, focus on survival
+
+universe:
+  allow_markets:
+    - KOSPI
+    - KOSDAQ
+  allow_assets:
+    - EQUITY
+    - ETF
+  deny_symbols: []
+
+risk:
+  max_gross_exposure_pct: 30
+  max_position_pct_per_symbol: 5
+  max_open_positions: 6
+  max_orders_per_day: 10
+  max_daily_loss_pct: 0.7
+  max_drawdown_pct: 3.0
+  require_cash_buffer_pct: 20
+
+execution:
+  prefer_order_type: LIMIT
+  max_spread_bps: 15
+  min_avg_daily_value_krw: 2000000000
+  cooldown_seconds_after_trade: 180
+  max_slippage_bps_est: 10
+  cancel_if_not_acked_sec: 5
+
+budget:
+  max_ai_calls_per_day: 50
+  max_ai_cost_est_krw_per_day: 1000
+  max_kis_rest_calls_per_day: 8000
+  kill_switch_on_budget_exceeded: true
