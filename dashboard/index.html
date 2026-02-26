@@ -119,6 +119,9 @@
             color: var(--text-secondary);
         }
 
+        .metric-label.green { color: var(--accent-green); }
+        .metric-label.red { color: var(--accent-red); }
+
         .progress-bar {
             height: 8px;
             background: var(--bg-tertiary);
@@ -163,6 +166,11 @@
             color: var(--text-secondary);
         }
 
+        .kill-switch-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
@@ -198,6 +206,22 @@
         .badge.rejected { background: rgba(248, 81, 73, 0.2); color: var(--accent-red); }
         .badge.filled { background: rgba(88, 166, 255, 0.2); color: var(--accent-blue); }
         .badge.error { background: rgba(210, 153, 34, 0.2); color: var(--accent-yellow); }
+        .badge.submitted, .badge.acked, .badge.converted-to-order, .badge.submit-sent { background: rgba(88, 166, 255, 0.2); color: var(--accent-blue); }
+        .badge.partially-filled, .badge.cancel-requested, .badge.cancel-req { background: rgba(210, 153, 34, 0.2); color: var(--accent-yellow); }
+        .badge.cancelled, .badge.cancel-ack, .badge.expired { background: var(--bg-tertiary); color: var(--text-secondary); }
+        .badge.broker-reject, .badge.cancel-reject, .badge.timeout, .badge.net-error, .badge.internal-error { background: rgba(248, 81, 73, 0.2); color: var(--accent-red); }
+        .badge.reconcile-found, .badge.reconcile-not-found { background: rgba(88, 166, 255, 0.2); color: var(--accent-blue); }
+
+        .error-banner {
+            display: none;
+            margin-bottom: 16px;
+            padding: 12px 16px;
+            border-radius: 8px;
+            border: 1px solid rgba(248, 81, 73, 0.4);
+            background: rgba(248, 81, 73, 0.12);
+            color: #ffb4ae;
+            font-size: 13px;
+        }
 
         .timestamp {
             font-size: 12px;
@@ -254,6 +278,8 @@
     </div>
 
     <div class="container">
+        <div class="error-banner" id="errorBanner"></div>
+
         <!-- Status Cards -->
         <div class="grid">
             <div class="card">
@@ -300,10 +326,33 @@
                     <button class="policy-btn" data-policy="aggressive">Aggressive</button>
                 </div>
             </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">KIS Mock Test (VTS)</span>
+                </div>
+                <div class="metric-label" id="kisMockEnv">Env: -</div>
+                <div class="metric-label" id="kisMockAccount">Account: -</div>
+                <div class="metric-label" id="kisMockUsage">KIS Calls: -</div>
+                <div style="margin-top: 10px; margin-bottom: 10px;">
+                    <button class="kill-switch-btn inactive" id="kisMockRunBtn" onclick="runKisMockTest()">Run Mock Test</button>
+                </div>
+                <div class="metric-label" id="kisMockResult">Result: Not run</div>
+                <div class="timestamp" id="kisMockUpdated">-</div>
+            </div>
         </div>
 
-        <!-- Positions and Intents -->
+        <!-- Positions, Intents and Orders -->
         <div class="grid">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Open Positions</span>
+                </div>
+                <div id="positionsTable">
+                    <div class="empty-state">No positions</div>
+                </div>
+            </div>
+
             <div class="card">
                 <div class="card-header">
                     <span class="card-title">Recent Intents</span>
@@ -339,60 +388,358 @@
 
     <script>
         const API_BASE = window.location.origin;
-        let autoRefresh = true;
         let refreshInterval;
+        let currentPolicyPreset = 'neutral';
+        let inFlightController = null;
+        let fetchSequence = 0;
+
+        const FETCH_LIMITS = {
+            positions: 20,
+            intents: 20,
+            orders: 20,
+            events: 50,
+        };
+
+        const pollingState = {
+            intents: [],
+            orders: [],
+            events: [],
+        };
+
+        const latestCursor = {
+            intents: null,
+            orders: null,
+            events: null,
+        };
+
+        function normalizeId(value) {
+            const parsed = Number(value);
+            return Number.isFinite(parsed) ? parsed : 0;
+        }
+
+        function mergeById(existing, incoming, idKey, limit) {
+            const byId = new Map();
+
+            [...incoming, ...existing].forEach(item => {
+                const id = normalizeId(item?.[idKey]);
+                if (id > 0) {
+                    byId.set(id, item);
+                }
+            });
+
+            return Array.from(byId.entries())
+                .sort((a, b) => b[0] - a[0])
+                .map(([, item]) => item)
+                .slice(0, limit);
+        }
+
+        function updateLatestCursor(kind, rows, idKey) {
+            const maxId = rows.reduce((max, row) => Math.max(max, normalizeId(row?.[idKey])), 0);
+            if (maxId > 0 && (!latestCursor[kind] || maxId > latestCursor[kind])) {
+                latestCursor[kind] = maxId;
+            }
+        }
+
+        function setConnectionState(connected) {
+            const statusDot = document.getElementById('connectionStatus');
+            const connectionText = document.getElementById('connectionText');
+
+            statusDot.classList.toggle('connected', connected);
+            connectionText.textContent = connected ? 'Connected' : 'Disconnected';
+        }
+
+        function showError(message) {
+            const banner = document.getElementById('errorBanner');
+            if (!message) {
+                banner.style.display = 'none';
+                banner.textContent = '';
+                return;
+            }
+
+            banner.style.display = 'block';
+            banner.textContent = message;
+        }
+
+        async function fetchJson(url, options = {}) {
+            const response = await fetch(url, {
+                cache: 'no-store',
+                ...options,
+            });
+            let data = null;
+
+            try {
+                data = await response.json();
+            } catch {
+                data = null;
+            }
+
+            if (!response.ok) {
+                const message = data?.detail || data?.message || data?.error || `Request failed (${response.status})`;
+                throw new Error(message);
+            }
+
+            return data;
+        }
+
+        function setActivePolicyButton(preset) {
+            document.querySelectorAll('.policy-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.policy === preset);
+            });
+            currentPolicyPreset = preset;
+        }
 
         // Connection check
-        async function checkConnection() {
+        async function checkConnection(signal) {
             try {
-                const response = await fetch(`${API_BASE}/health`);
+                const response = await fetch(`${API_BASE}/health`, { cache: 'no-store', signal });
                 if (response.ok) {
-                    document.getElementById('connectionStatus').classList.add('connected');
-                    document.getElementById('connectionText').textContent = 'Connected';
+                    setConnectionState(true);
                     return true;
                 }
+                setConnectionState(false);
             } catch (e) {
-                document.getElementById('connectionStatus').classList.remove('connected');
-                document.getElementById('connectionText').textContent = 'Disconnected';
+                if (e instanceof DOMException && e.name === 'AbortError') {
+                    throw e;
+                }
+                setConnectionState(false);
             }
             return false;
         }
 
         // Fetch and update data
         async function fetchData() {
-            const connected = await checkConnection();
+            if (inFlightController) {
+                inFlightController.abort();
+            }
+
+            inFlightController = new AbortController();
+            const signal = inFlightController.signal;
+            const requestId = ++fetchSequence;
+
+            const connected = await checkConnection(signal);
             if (!connected) {
-                document.getElementById('connectionStatus').classList.remove('connected');
-                document.getElementById('connectionText').textContent = 'Disconnected';
+                showError('Trading Core 연결이 끊어졌습니다. 자동으로 재시도 중입니다.');
                 return;
             }
 
             try {
-                // Fetch budget status
-                const budgetRes = await fetch(`${API_BASE}/api/budget`);
-                if (budgetRes.ok) {
-                    const budget = await budgetRes.json();
-                    updateBudgetStatus(budget);
+                const useIntentDelta = Number.isFinite(latestCursor.intents);
+                const useOrderDelta = Number.isFinite(latestCursor.orders);
+                const useEventDelta = Number.isFinite(latestCursor.events);
+
+                const intentsUrl = `${API_BASE}/api/intents?limit=${FETCH_LIMITS.intents}${useIntentDelta ? `&since=${latestCursor.intents}` : ''}`;
+                const ordersUrl = `${API_BASE}/api/orders?limit=${FETCH_LIMITS.orders}${useOrderDelta ? `&since=${latestCursor.orders}` : ''}`;
+                const eventsUrl = `${API_BASE}/api/events?limit=${FETCH_LIMITS.events}${useEventDelta ? `&since=${latestCursor.events}` : ''}`;
+
+                const [budgetRes, positionsRes, intentsRes, ordersRes, eventsRes, policyRes, mockStatusRes] = await Promise.allSettled([
+                    fetchJson(`${API_BASE}/api/budget`, { signal }),
+                    fetchJson(`${API_BASE}/api/positions?limit=${FETCH_LIMITS.positions}`, { signal }),
+                    fetchJson(intentsUrl, { signal }),
+                    fetchJson(ordersUrl, { signal }),
+                    fetchJson(eventsUrl, { signal }),
+                    fetchJson(`${API_BASE}/api/policy`, { signal }),
+                    fetchJson(`${API_BASE}/api/kis/mock-test/status`, { signal }),
+                ]);
+
+                if (requestId !== fetchSequence) {
+                    return;
                 }
 
-                // Fetch intents
-                const intentsRes = await fetch(`${API_BASE}/api/intents`);
-                if (intentsRes.ok) {
-                    const intents = await intentsRes.json();
-                    updateIntentsTable(intents);
+                const errors = [];
+
+                if (budgetRes.status === 'fulfilled') {
+                    updateBudgetStatus(budgetRes.value);
+                } else {
+                    errors.push(`budget: ${budgetRes.reason instanceof Error ? budgetRes.reason.message : 'unknown error'}`);
                 }
 
-                // Fetch orders
-                const ordersRes = await fetch(`${API_BASE}/api/orders`);
-                if (ordersRes.ok) {
-                    const orders = await ordersRes.json();
-                    updateOrdersTable(orders);
+                if (intentsRes.status === 'fulfilled') {
+                    const intentRows = Array.isArray(intentsRes.value) ? intentsRes.value : [];
+                    pollingState.intents = useIntentDelta
+                        ? mergeById(pollingState.intents, intentRows, 'intentId', FETCH_LIMITS.intents)
+                        : intentRows.slice(0, FETCH_LIMITS.intents);
+                    updateLatestCursor('intents', pollingState.intents, 'intentId');
+                    updateIntentsTable(pollingState.intents);
+                } else {
+                    errors.push(`intents: ${intentsRes.reason instanceof Error ? intentsRes.reason.message : 'unknown error'}`);
+                }
+
+                if (positionsRes.status === 'fulfilled') {
+                    updatePositionsTable(positionsRes.value);
+                } else {
+                    errors.push(`positions: ${positionsRes.reason instanceof Error ? positionsRes.reason.message : 'unknown error'}`);
+                }
+
+                if (ordersRes.status === 'fulfilled') {
+                    const orderRows = Array.isArray(ordersRes.value) ? ordersRes.value : [];
+                    pollingState.orders = useOrderDelta
+                        ? mergeById(pollingState.orders, orderRows, 'orderId', FETCH_LIMITS.orders)
+                        : orderRows.slice(0, FETCH_LIMITS.orders);
+                    updateLatestCursor('orders', pollingState.orders, 'orderId');
+                    updateOrdersTable(pollingState.orders);
+                } else {
+                    errors.push(`orders: ${ordersRes.reason instanceof Error ? ordersRes.reason.message : 'unknown error'}`);
+                }
+
+                if (eventsRes.status === 'fulfilled') {
+                    const eventRows = Array.isArray(eventsRes.value) ? eventsRes.value : [];
+                    pollingState.events = useEventDelta
+                        ? mergeById(pollingState.events, eventRows, 'eventId', FETCH_LIMITS.events)
+                        : eventRows.slice(0, FETCH_LIMITS.events);
+                    updateLatestCursor('events', pollingState.events, 'eventId');
+                    updateEventsTable(pollingState.events);
+                } else {
+                    errors.push(`events: ${eventsRes.reason instanceof Error ? eventsRes.reason.message : 'unknown error'}`);
+                }
+
+                if (policyRes.status === 'fulfilled') {
+                    const policy = policyRes.value;
+                    if (policy && policy.preset) {
+                        setActivePolicyButton(policy.preset);
+                    }
+                } else {
+                    errors.push(`policy: ${policyRes.reason instanceof Error ? policyRes.reason.message : 'unknown error'}`);
+                }
+
+                if (mockStatusRes.status === 'fulfilled') {
+                    updateKisMockStatus(mockStatusRes.value);
+                } else {
+                    errors.push(`mock-test: ${mockStatusRes.reason instanceof Error ? mockStatusRes.reason.message : 'unknown error'}`);
+                }
+
+                if (errors.length > 0) {
+                    showError(`일부 데이터 조회 실패 - ${errors.join(' | ')}`);
+                } else {
+                    showError('');
                 }
 
                 document.getElementById('lastUpdated').textContent = new Date().toLocaleString('ko-KR');
             } catch (e) {
+                if (e instanceof DOMException && e.name === 'AbortError') {
+                    return;
+                }
+
                 console.error('Error fetching data:', e);
+                showError(e instanceof Error ? e.message : '데이터 조회 중 오류가 발생했습니다.');
+            } finally {
+                if (requestId === fetchSequence) {
+                    inFlightController = null;
+                }
             }
+        }
+
+        function badgeClassForIntentStatus(status) {
+            const normalized = (status || '').toLowerCase().replace(/_/g, '-');
+            const allowed = ['pending', 'approved', 'rejected', 'expired', 'converted-to-order'];
+            return allowed.includes(normalized) ? normalized : 'pending';
+        }
+
+        function badgeClassForOrderState(state) {
+            const normalized = (state || '').toLowerCase().replace(/_/g, '-');
+            const allowed = [
+                'draft',
+                'pending-submit',
+                'submitted',
+                'acked',
+                'partially-filled',
+                'filled',
+                'cancel-requested',
+                'cancelled',
+                'rejected',
+                'expired',
+                'error',
+                'pending-unknown',
+            ];
+            return allowed.includes(normalized) ? normalized : 'pending';
+        }
+
+        function badgeClassForEventType(eventType) {
+            const normalized = (eventType || '').toLowerCase().replace(/_/g, '-');
+            const allowed = [
+                'submit',
+                'submit-sent',
+                'ack',
+                'broker-reject',
+                'timeout',
+                'net-error',
+                'partial-fill',
+                'fill',
+                'cancel-req',
+                'cancel-ack',
+                'cancel-reject',
+                'expire',
+                'reconcile-found',
+                'reconcile-not-found',
+                'internal-error',
+            ];
+            return allowed.includes(normalized) ? normalized : 'pending';
+        }
+
+        function formatEventPayload(payload) {
+            if (!payload) {
+                return '-';
+            }
+
+            if (typeof payload === 'string') {
+                try {
+                    const parsed = JSON.parse(payload);
+                    if (parsed && typeof parsed === 'object') {
+                        const entries = Object.entries(parsed).slice(0, 3);
+                        return entries.map(([k, v]) => `${k}:${String(v)}`).join(', ');
+                    }
+                } catch {
+                    // Keep raw string fallback
+                }
+
+                return payload.length > 60 ? `${payload.slice(0, 60)}...` : payload;
+            }
+
+            if (typeof payload === 'object') {
+                const entries = Object.entries(payload).slice(0, 3);
+                return entries.map(([k, v]) => `${k}:${String(v)}`).join(', ');
+            }
+
+            return String(payload);
+        }
+
+        function parseReasonList(value) {
+            if (!value) {
+                return [];
+            }
+
+            if (Array.isArray(value)) {
+                return value.filter(item => typeof item === 'string');
+            }
+
+            if (typeof value === 'string') {
+                try {
+                    const parsed = JSON.parse(value);
+                    if (Array.isArray(parsed)) {
+                        return parsed.filter(item => typeof item === 'string');
+                    }
+                } catch {
+                    // fallback to comma split below
+                }
+
+                return value
+                    .split(',')
+                    .map(item => item.trim())
+                    .filter(item => item.length > 0);
+            }
+
+            return [];
+        }
+
+        function formatIntentReasons(intent) {
+            const riskReasons = parseReasonList(intent.riskReasonCodes);
+            const source = riskReasons.length > 0 ? riskReasons : parseReasonList(intent.reasons);
+
+            if (source.length === 0) {
+                return '-';
+            }
+
+            const text = source.slice(0, 3).join(', ');
+            return text.length > 60 ? `${text.slice(0, 60)}...` : text;
         }
 
         function updateBudgetStatus(budget) {
@@ -420,6 +767,125 @@
                 killSwitchBtn.className = 'kill-switch-btn inactive';
                 killSwitchStatus.textContent = 'Inactive - Trading Enabled';
             }
+
+            if (budget.policyPreset) {
+                setActivePolicyButton(budget.policyPreset);
+            }
+        }
+
+        function updateKisMockStatus(status) {
+            const envEl = document.getElementById('kisMockEnv');
+            const accountEl = document.getElementById('kisMockAccount');
+            const usageEl = document.getElementById('kisMockUsage');
+            const resultEl = document.getElementById('kisMockResult');
+            const updatedEl = document.getElementById('kisMockUpdated');
+            const runBtn = document.getElementById('kisMockRunBtn');
+
+            if (!status || !status.configured) {
+                envEl.textContent = 'Env: Not configured';
+                accountEl.textContent = 'Account: -';
+                usageEl.textContent = 'KIS Calls: -';
+                resultEl.textContent = 'Result: KIS gateway not configured';
+                updatedEl.textContent = '-';
+                runBtn.disabled = true;
+                runBtn.classList.remove('active');
+                runBtn.classList.add('inactive');
+                return;
+            }
+
+            envEl.textContent = `Env: ${status.env || '-'}`;
+            accountEl.textContent = `Account: ${status.accountNoMasked || '-'}`;
+            usageEl.textContent = `KIS Calls: ${status.kisCallsUsed ?? 0} / ${status.kisCallsLimit ?? 0}`;
+
+            const canRun = Boolean(status.canRun);
+            runBtn.disabled = !canRun;
+            runBtn.classList.toggle('active', canRun);
+            runBtn.classList.toggle('inactive', !canRun);
+
+            if (!status.lastResult) {
+                resultEl.className = 'metric-label';
+                resultEl.textContent = canRun ? 'Result: Ready to run' : 'Result: VTS 환경에서만 실행 가능';
+                updatedEl.textContent = '-';
+                return;
+            }
+
+            const last = status.lastResult;
+            resultEl.textContent = `Result: ${last.message || (last.success ? 'Success' : 'Failed')}`;
+            resultEl.className = `metric-label ${last.success ? 'green' : 'red'}`;
+            const symbols = Array.isArray(last.sampleSymbols) && last.sampleSymbols.length > 0
+                ? ` / Symbols: ${last.sampleSymbols.join(', ')}`
+                : '';
+            updatedEl.textContent = `Last run: ${formatDateTime(last.checkedAt)} (${last.durationMs}ms)${symbols}`;
+        }
+
+        async function runKisMockTest() {
+            const runBtn = document.getElementById('kisMockRunBtn');
+            const previousText = runBtn.textContent;
+            runBtn.disabled = true;
+            runBtn.textContent = 'Running...';
+
+            try {
+                const result = await fetchJson(`${API_BASE}/api/kis/mock-test/run`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                });
+
+                updateKisMockStatus({
+                    configured: true,
+                    env: result.env,
+                    accountNoMasked: result.accountNoMasked,
+                    canRun: result.env === 'VTS',
+                    kisCallsUsed: 0,
+                    kisCallsLimit: 0,
+                    lastResult: result,
+                });
+
+                showError('');
+                await fetchData();
+            } catch (e) {
+                console.error('Error running KIS mock test:', e);
+                showError(e instanceof Error ? e.message : '모의계좌 테스트 실행에 실패했습니다.');
+                await fetchData();
+            } finally {
+                runBtn.disabled = false;
+                runBtn.textContent = previousText;
+            }
+        }
+
+        function updatePositionsTable(positions) {
+            const container = document.getElementById('positionsTable');
+
+            if (!positions || positions.length === 0) {
+                container.innerHTML = '<div class="empty-state">No positions</div>';
+                return;
+            }
+
+            const rows = positions.slice(0, 10);
+
+            container.innerHTML = `
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Qty</th>
+                            <th>Avg</th>
+                            <th>Last</th>
+                            <th>PnL</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rows.map(position => `
+                            <tr>
+                                <td>${position.symbol || '-'}</td>
+                                <td>${position.qty ?? 0}</td>
+                                <td>${formatPrice(position.avgPrice)}</td>
+                                <td>${formatPrice(position.currentPrice)}</td>
+                                <td class="${Number(position.unrealizedPnl) >= 0 ? 'green' : 'red'}">${formatSignedNumber(position.unrealizedPnl)}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
         }
 
         function updateIntentsTable(intents) {
@@ -441,6 +907,7 @@
                             <th>Side</th>
                             <th>Qty</th>
                             <th>Status</th>
+                            <th>Reasons</th>
                             <th>Time</th>
                         </tr>
                     </thead>
@@ -451,7 +918,8 @@
                                 <td>${intent.symbol || '-'}</td>
                                 <td class="${intent.side === 'BUY' ? 'green' : 'red'}">${intent.side || '-'}</td>
                                 <td>${intent.intentQty || '-'}</td>
-                                <td><span class="badge ${(intent.status || '').toLowerCase()}">${intent.status || '-'}</span></td>
+                                <td><span class="badge ${badgeClassForIntentStatus(intent.status)}">${intent.status || '-'}</span></td>
+                                <td class="timestamp">${formatIntentReasons(intent)}</td>
                                 <td class="timestamp">${formatTime(intent.createdAt)}</td>
                             </tr>
                         `).join('')}
@@ -491,8 +959,48 @@
                                 <td class="${order.side === 'BUY' ? 'green' : 'red'}">${order.side || '-'}</td>
                                 <td>${order.qty || 0}</td>
                                 <td>${order.filledQty || 0}</td>
-                                <td><span class="badge ${(order.state || '').toLowerCase().replace('_', '-')}">${order.state || '-'}</span></td>
+                                <td><span class="badge ${badgeClassForOrderState(order.state)}">${order.state || '-'}</span></td>
                                 <td class="timestamp">${formatTime(order.createdAt)}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        function updateEventsTable(events) {
+            const container = document.getElementById('eventsTable');
+
+            if (!events || events.length === 0) {
+                container.innerHTML = '<div class="empty-state">No events yet</div>';
+                return;
+            }
+
+            const recentEvents = events.slice(0, 20);
+
+            container.innerHTML = `
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Order</th>
+                            <th>Type</th>
+                            <th>From</th>
+                            <th>To</th>
+                            <th>Message</th>
+                            <th>Time</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${recentEvents.map(event => `
+                            <tr>
+                                <td>${event.eventId || '-'}</td>
+                                <td>${event.orderId || '-'}</td>
+                                <td><span class="badge ${badgeClassForEventType(event.eventType)}">${event.eventType || '-'}</span></td>
+                                <td>${event.fromState || '-'}</td>
+                                <td>${event.toState || '-'}</td>
+                                <td>${formatEventPayload(event.payload)}</td>
+                                <td class="timestamp">${formatTime(event.timestamp)}</td>
                             </tr>
                         `).join('')}
                     </tbody>
@@ -506,6 +1014,36 @@
             return date.toLocaleTimeString('ko-KR');
         }
 
+        function formatDateTime(dateStr) {
+            if (!dateStr) return '-';
+            const date = new Date(dateStr);
+            if (Number.isNaN(date.getTime())) {
+                return '-';
+            }
+
+            return date.toLocaleString('ko-KR');
+        }
+
+        function formatPrice(value) {
+            if (value === null || value === undefined || Number.isNaN(Number(value))) {
+                return '-';
+            }
+
+            return Number(value).toLocaleString('ko-KR', {
+                maximumFractionDigits: 2,
+            });
+        }
+
+        function formatSignedNumber(value) {
+            if (value === null || value === undefined || Number.isNaN(Number(value))) {
+                return '-';
+            }
+
+            const num = Number(value);
+            const prefix = num > 0 ? '+' : '';
+            return `${prefix}${num.toLocaleString('ko-KR', { maximumFractionDigits: 0 })}`;
+        }
+
         // Kill Switch toggle
         async function toggleKillSwitch() {
             const btn = document.getElementById('killSwitchBtn');
@@ -513,28 +1051,43 @@
             const action = isActive ? 'deactivate' : 'activate';
             
             try {
-                const response = await fetch(`${API_BASE}/api/killswitch/${action}`, {
+                await fetchJson(`${API_BASE}/api/killswitch/${action}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ reason: 'Manual toggle from dashboard' })
                 });
-                
-                if (response.ok) {
-                    await fetchData();
-                }
+
+                showError('');
+                await fetchData();
             } catch (e) {
                 console.error('Error toggling kill switch:', e);
+                showError(e instanceof Error ? e.message : 'Kill switch 변경에 실패했습니다.');
             }
         }
 
         // Policy selector
         document.querySelectorAll('.policy-btn').forEach(btn => {
             btn.addEventListener('click', async () => {
-                document.querySelectorAll('.policy-btn').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                
-                // In production, would send policy change to server
-                console.log('Policy changed to:', btn.dataset.policy);
+                const preset = btn.dataset.policy;
+                if (!preset || preset === currentPolicyPreset) {
+                    return;
+                }
+
+                try {
+                    const result = await fetchJson(`${API_BASE}/api/policy/preset`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ preset })
+                    });
+
+                    setActivePolicyButton(result.preset || preset);
+                    showError('');
+                    await fetchData();
+                } catch (e) {
+                    console.error('Error changing policy preset:', e);
+                    setActivePolicyButton(currentPolicyPreset);
+                    showError(e instanceof Error ? e.message : '정책 변경에 실패했습니다.');
+                }
             });
         });
 
@@ -545,12 +1098,8 @@
         }
 
         // Initial load
-        checkConnection().then(connected => {
-            if (connected) {
-                fetchData();
-                startAutoRefresh();
-            }
-        });
+        fetchData();
+        startAutoRefresh();
 
         // Pause on tab hidden
         document.addEventListener('visibilitychange', () => {
