@@ -28,6 +28,20 @@ interface BalanceResponse {
   AVG_PRC?: string;
 }
 
+interface MockAccountTestResult {
+  success: boolean;
+  env: 'REAL' | 'VTS';
+  accountNoMasked: string;
+  tokenOk: boolean;
+  balanceInquiryOk: boolean;
+  balanceCount: number;
+  sampleSymbols: string[];
+  checkedAt: string;
+  durationMs: number;
+  message: string;
+  error?: string;
+}
+
 /**
  * KIS Gateway - REST API Adapter
  * 
@@ -56,7 +70,7 @@ export class KisGateway {
   private rateLimitHitCount = 0;
 
   private static readonly REAL_BASE = 'https://openapi.koreainvestment.com:9443';
-  private static readonly TEST_BASE = 'https://openapi.koreainvestment.com:22443';
+  private static readonly TEST_BASE = 'https://openapivts.koreainvestment.com:29443';
 
   constructor(config: KisConfig) {
     this.config = config;
@@ -72,6 +86,10 @@ export class KisGateway {
         'Content-Type': 'application/json',
       },
     });
+  }
+
+  private getTrId(realTrId: string, vtsTrId: string): string {
+    return this.config.env === 'VTS' ? vtsTrId : realTrId;
   }
 
   // ==================== Token Management ====================
@@ -193,7 +211,7 @@ export class KisGateway {
           authorization: `Bearer ${token}`,
           appkey: this.config.appKey,
           appsecret: this.config.appSecret,
-          tr_id: 'TTTC0802U',
+          tr_id: this.getTrId('TTTC0802U', 'VTTC0802U'),
         },
       });
 
@@ -243,7 +261,7 @@ export class KisGateway {
           authorization: `Bearer ${token}`,
           appkey: this.config.appKey,
           appsecret: this.config.appSecret,
-          tr_id: 'TTTC0803U',
+          tr_id: this.getTrId('TTTC0803U', 'VTTC0803U'),
         },
       });
 
@@ -278,7 +296,7 @@ export class KisGateway {
           authorization: `Bearer ${token}`,
           appkey: this.config.appKey,
           appsecret: this.config.appSecret,
-          tr_id: 'TTTC0801U',
+          tr_id: this.getTrId('TTTC0801U', 'VTTC0801U'),
         },
       });
 
@@ -298,6 +316,10 @@ export class KisGateway {
    * Get account balance
    */
   async getBalance(): Promise<BalanceResponse[]> {
+    return this.getBalanceInternal(false);
+  }
+
+  private async getBalanceInternal(strict: boolean): Promise<BalanceResponse[]> {
     await this.acquireRateLimit();
 
     const url = '/uapi/domestic-stock/v1/trading/inquire-balance';
@@ -312,12 +334,13 @@ export class KisGateway {
 
     try {
       const token = await this.getAccessToken();
-      const response = await this.client.post(url, body, {
+      const response = await this.client.get(url, {
+        params: body,
         headers: {
           authorization: `Bearer ${token}`,
           appkey: this.config.appKey,
           appsecret: this.config.appSecret,
-          tr_id: 'TTTC8401R',
+          tr_id: this.getTrId('TTTC8434R', 'VTTC8434R'),
         },
       });
 
@@ -329,8 +352,78 @@ export class KisGateway {
       }
     } catch (error) {
       console.error('Failed to get balance', error);
+      if (strict) {
+        throw error instanceof Error ? error : new Error('Balance inquiry failed');
+      }
     }
     return [];
+  }
+
+  getEnvironment(): 'REAL' | 'VTS' {
+    return this.config.env;
+  }
+
+  getAccountNoMasked(): string {
+    const raw = this.config.accountNo || '';
+    if (raw.length <= 4) {
+      return raw;
+    }
+
+    const visible = raw.slice(-4);
+    return `${'*'.repeat(Math.max(0, raw.length - 4))}${visible}`;
+  }
+
+  async runMockAccountTest(): Promise<MockAccountTestResult> {
+    const startedAt = Date.now();
+    const checkedAt = new Date().toISOString();
+
+    const result: MockAccountTestResult = {
+      success: false,
+      env: this.config.env,
+      accountNoMasked: this.getAccountNoMasked(),
+      tokenOk: false,
+      balanceInquiryOk: false,
+      balanceCount: 0,
+      sampleSymbols: [],
+      checkedAt,
+      durationMs: 0,
+      message: '',
+    };
+
+    if (this.config.env !== 'VTS') {
+      result.message = 'Mock account test is only allowed when KIS_ENV=VTS';
+      result.durationMs = Date.now() - startedAt;
+      return result;
+    }
+
+    try {
+      await this.getAccessToken();
+      result.tokenOk = true;
+    } catch (error) {
+      result.message = 'Token refresh failed during mock account test';
+      result.error = error instanceof Error ? error.message : 'Unknown token error';
+      result.durationMs = Date.now() - startedAt;
+      return result;
+    }
+
+    try {
+      const balances = await this.getBalanceInternal(true);
+      result.balanceInquiryOk = true;
+      result.balanceCount = balances.length;
+      result.sampleSymbols = balances
+        .map((item) => item.PDNO)
+        .filter((item): item is string => typeof item === 'string' && item.length > 0)
+        .slice(0, 5);
+
+      result.success = true;
+      result.message = `Mock account test passed (balances=${result.balanceCount})`;
+    } catch (error) {
+      result.message = 'Balance inquiry failed during mock account test';
+      result.error = error instanceof Error ? error.message : 'Unknown balance error';
+    }
+
+    result.durationMs = Date.now() - startedAt;
+    return result;
   }
 
   // ==================== Metrics ====================

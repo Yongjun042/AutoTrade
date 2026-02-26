@@ -59,6 +59,9 @@ export class TradeIntent {
   @Column({ type: 'text', nullable: true })
   reasons?: string;
 
+  @Column({ type: 'text', nullable: true })
+  riskReasonCodes?: string;
+
   @Column({ nullable: true })
   expiresAt?: Date;
 

@@ -1,4 +1,4 @@
-import { OrderState, OrderStateTransitions } from '../domain/Order';
+import { Order, OrderState, OrderStateTransitions } from '../domain/Order';
 
 describe('OrderStateTransitions', () => {
   describe('isValidTransition', () => {
