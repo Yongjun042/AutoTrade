@@ -181,6 +181,7 @@ describe('PolicyRiskEngine', () => {
           maxAiCallsPerDay: 50,
           maxAiCostEstKrwPerDay: 1000,
           maxKisRestCallsPerDay: 8000,
+          maxOrdersPerDay: 10,
           killSwitchOnBudgetExceeded: true,
         },
       });

@@ -1,6 +1,6 @@
 import { PolicyConfig, PolicyPresets } from './PolicyConfig';
 import { RiskDecision, RiskDecisionType } from '../domain/RiskDecision';
-import { TradeIntent } from '../domain/TradeIntent';
+import { TradeIntent, TradeIntentOrderType } from '../domain/TradeIntent';
 
 interface PortfolioState {
   totalEquity: number;
@@ -49,6 +49,8 @@ export class PolicyRiskEngine {
   evaluate(intent: TradeIntent, portfolio: PortfolioState, dailyPnl: number): RiskDecision {
     const rejectReasons: string[] = [];
 
+    this.pruneCooldownEntries();
+
     // 1. Universe Check
     if (!this.isSymbolAllowed(intent.symbol)) {
       rejectReasons.push('RISK_SYMBOL_NOT_ALLOWED');
@@ -63,7 +65,12 @@ export class PolicyRiskEngine {
     // 3. Per-Symbol Position Limit
     const existingPosition = portfolio.positions.find(p => p.symbol === intent.symbol);
     const existingValue = existingPosition ? existingPosition.marketValue : 0;
-    const proposedValue = intent.intentQty * (intent.limitPrice || 0);
+    const referencePrice = this.resolveReferencePrice(intent, existingPosition);
+    if (referencePrice <= 0) {
+      rejectReasons.push('RISK_REFERENCE_PRICE_UNAVAILABLE');
+    }
+
+    const proposedValue = intent.intentQty * referencePrice;
     const totalExposure = existingValue + proposedValue;
 
     if (portfolio.totalEquity > 0) {
@@ -74,11 +81,13 @@ export class PolicyRiskEngine {
     }
 
     // 4. Gross Exposure Check
-    const currentExposurePct = (portfolio.marketValue / portfolio.totalEquity) * 100;
-    const newExposurePct = currentExposurePct + (proposedValue / portfolio.totalEquity) * 100;
+    if (portfolio.totalEquity > 0) {
+      const currentExposurePct = (portfolio.marketValue / portfolio.totalEquity) * 100;
+      const newExposurePct = currentExposurePct + (proposedValue / portfolio.totalEquity) * 100;
 
-    if (newExposurePct > this.policy.risk.maxGrossExposurePct) {
-      rejectReasons.push('RISK_MAX_GROSS_EXPOSURE_EXCEEDED');
+      if (newExposurePct > this.policy.risk.maxGrossExposurePct) {
+        rejectReasons.push('RISK_MAX_GROSS_EXPOSURE_EXCEEDED');
+      }
     }
 
     // 5. Cash Buffer Check
@@ -141,5 +150,41 @@ export class PolicyRiskEngine {
 
   getPolicy(): PolicyConfig {
     return this.policy;
+  }
+
+  private resolveReferencePrice(intent: TradeIntent, existingPosition?: PositionSnapshot): number {
+    if (intent.orderType === TradeIntentOrderType.MARKET) {
+      if (existingPosition && existingPosition.currentPrice > 0) {
+        return existingPosition.currentPrice;
+      }
+      return 0;
+    }
+
+    if (intent.limitPrice && intent.limitPrice > 0) {
+      return intent.limitPrice;
+    }
+
+    if (existingPosition && existingPosition.currentPrice > 0) {
+      return existingPosition.currentPrice;
+    }
+
+    return 0;
+  }
+
+  private pruneCooldownEntries(): void {
+    if (this.recentTradedSymbols.size === 0) {
+      return;
+    }
+
+    const now = Date.now();
+    const cooldownMs = this.policy.execution.cooldownSecondsAfterTrade * 1000;
+
+    for (const symbol of this.recentTradedSymbols) {
+      const lastTrade = this.lastTradeTime.get(symbol);
+      if (!lastTrade || now - lastTrade.getTime() >= cooldownMs) {
+        this.recentTradedSymbols.delete(symbol);
+        this.lastTradeTime.delete(symbol);
+      }
+    }
   }
 }

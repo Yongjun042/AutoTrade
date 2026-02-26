@@ -21,6 +21,14 @@ interface BudgetStatus {
   killSwitchActive: boolean;
 }
 
+interface BudgetCounters {
+  date: string;
+  aiCalls: number;
+  aiCostKrw: number;
+  orders: number;
+  kisCalls: number;
+}
+
 /**
  * Budget Manager
  * 
@@ -36,6 +44,7 @@ export class BudgetManager {
   private redis: Redis | null = null;
   private budget: BudgetConfig;
   private killSwitch = false;
+  private counters: BudgetCounters;
 
   constructor(redisUrl: string | null, budget?: Partial<BudgetConfig>) {
     // Default budget (neutral preset)
@@ -49,45 +58,70 @@ export class BudgetManager {
 
     if (redisUrl) {
       this.redis = new Redis(redisUrl);
+      this.redis.on('error', (err) => {
+        console.error('Redis error in BudgetManager:', err);
+      });
+    }
+
+    this.counters = {
+      date: this.todayKey(),
+      aiCalls: 0,
+      aiCostKrw: 0,
+      orders: 0,
+      kisCalls: 0,
+    };
+
+    if (this.redis) {
+      void this.hydrateFromRedis();
     }
   }
 
   setBudget(budget: Partial<BudgetConfig>): void {
     this.budget = { ...this.budget, ...budget };
+    this.checkBudgetExceeded();
   }
 
   /**
    * Check if we can make an AI call
    */
   canMakeAiCall(): boolean {
+    this.ensureCurrentDate();
     if (this.killSwitch) return false;
-    return this.getAiCallsToday() < this.budget.maxAiCallsPerDay;
+    return this.counters.aiCalls < this.budget.maxAiCallsPerDay;
   }
 
   /**
    * Check if we can make an order
    */
   canPlaceOrder(): boolean {
+    this.ensureCurrentDate();
     if (this.killSwitch) return false;
-    return this.getOrdersToday() < this.budget.maxOrdersPerDay;
+    return this.counters.orders < this.budget.maxOrdersPerDay;
   }
 
   /**
    * Check if we can make KIS REST call
    */
   canMakeKisCall(): boolean {
+    this.ensureCurrentDate();
     if (this.killSwitch) return false;
-    return this.getKisCallsToday() < this.budget.maxKisRestCallsPerDay;
+    return this.counters.kisCalls < this.budget.maxKisRestCallsPerDay;
   }
 
   /**
    * Record AI call
    */
   async recordAiCall(estimatedCostKrw: number): Promise<void> {
-    this.incrementAiCalls();
-    await this.addAiCost(estimatedCostKrw);
+    this.ensureCurrentDate();
+    this.counters.aiCalls += 1;
+    this.counters.aiCostKrw += estimatedCostKrw;
 
-    console.debug(`AI call recorded: cost=${estimatedCostKrw}krw, today=${this.getAiCallsToday()}`);
+    await Promise.all([
+      this.incrementRedisCounter(this.aiCallsKey(), 1),
+      this.incrementRedisCounter(this.aiCostKey(), estimatedCostKrw),
+    ]);
+
+    console.debug(`AI call recorded: cost=${estimatedCostKrw}krw, today=${this.counters.aiCalls}`);
 
     this.checkBudgetExceeded();
   }
@@ -96,38 +130,72 @@ export class BudgetManager {
    * Record KIS REST call
    */
   async recordKisCall(): Promise<void> {
-    this.incrementKisCalls();
-    console.debug(`KIS REST call recorded: today=${this.getKisCallsToday()}`);
+    this.ensureCurrentDate();
+    this.counters.kisCalls += 1;
+    await this.incrementRedisCounter(this.kisCallsKey(), 1);
+    console.debug(`KIS REST call recorded: today=${this.counters.kisCalls}`);
+    this.checkBudgetExceeded();
   }
 
   /**
    * Record order
    */
   async recordOrder(): Promise<void> {
-    this.incrementOrders();
-    console.debug(`Order recorded: today=${this.getOrdersToday()}`);
+    this.ensureCurrentDate();
+    this.counters.orders += 1;
+    await this.incrementRedisCounter(this.ordersKey(), 1);
+    console.debug(`Order recorded: today=${this.counters.orders}`);
+    this.checkBudgetExceeded();
   }
 
   // ==================== Budget Check ====================
 
   private checkBudgetExceeded(): void {
-    const aiCalls = this.getAiCallsToday();
-    const aiCost = this.getAiCostToday();
+    this.ensureCurrentDate();
 
-    if (
-      (aiCalls >= this.budget.maxAiCallsPerDay || aiCost >= this.budget.maxAiCostEstKrwPerDay) &&
-      this.budget.killSwitchOnBudgetExceeded
-    ) {
-      console.warn(
-        `AI budget exceeded! Calls: ${aiCalls}/${this.budget.maxAiCallsPerDay}, Cost: ${aiCost}/${this.budget.maxAiCostEstKrwPerDay}`
-      );
+    const aiCalls = this.counters.aiCalls;
+    const aiCost = this.counters.aiCostKrw;
+    const orders = this.counters.orders;
+    const kisCalls = this.counters.kisCalls;
+
+    const exceeded: string[] = [];
+
+    if (aiCalls >= this.budget.maxAiCallsPerDay) {
+      exceeded.push(`AI_CALLS ${aiCalls}/${this.budget.maxAiCallsPerDay}`);
+    }
+
+    if (aiCost >= this.budget.maxAiCostEstKrwPerDay) {
+      exceeded.push(`AI_COST ${aiCost}/${this.budget.maxAiCostEstKrwPerDay}`);
+    }
+
+    if (orders >= this.budget.maxOrdersPerDay) {
+      exceeded.push(`ORDERS ${orders}/${this.budget.maxOrdersPerDay}`);
+    }
+
+    if (kisCalls >= this.budget.maxKisRestCallsPerDay) {
+      exceeded.push(`KIS_CALLS ${kisCalls}/${this.budget.maxKisRestCallsPerDay}`);
+    }
+
+    if (exceeded.length === 0) {
+      return;
+    }
+
+    const message = `Budget exceeded! ${exceeded.join(', ')}`;
+    console.warn(message);
+
+    if (this.budget.killSwitchOnBudgetExceeded && !this.killSwitch) {
+      this.activateKillSwitch(message);
     }
   }
 
   // ==================== Redis Operations ====================
 
   private todayKey(): string {
-    return new Date().toISOString().split('T')[0];
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
   }
 
   private aiCallsKey(): string { return `budget:ai_calls:${this.todayKey()}`; }
@@ -135,44 +203,77 @@ export class BudgetManager {
   private ordersKey(): string { return `budget:orders:${this.todayKey()}`; }
   private kisCallsKey(): string { return `budget:kis_calls:${this.todayKey()}`; }
 
-  private getAiCallsToday(): number {
-    return this.getRedisValue(this.aiCallsKey());
-  }
+  private ensureCurrentDate(): void {
+    const today = this.todayKey();
+    if (this.counters.date === today) {
+      return;
+    }
 
-  private incrementAiCalls(): void {
+    this.counters = {
+      date: today,
+      aiCalls: 0,
+      aiCostKrw: 0,
+      orders: 0,
+      kisCalls: 0,
+    };
+
     if (this.redis) {
-      this.redis.incr(this.aiCallsKey()).catch(console.error);
+      void this.hydrateFromRedis();
     }
   }
 
-  private getAiCostToday(): number {
-    return this.getRedisValue(this.aiCostKey());
+  private secondsUntilTomorrow(): number {
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setHours(24, 0, 0, 0);
+    return Math.max(1, Math.floor((tomorrow.getTime() - now.getTime()) / 1000));
   }
 
-  private async addAiCost(cost: number): Promise<void> {
-    if (this.redis) {
-      await this.redis.incrby(this.aiCostKey(), cost).catch(console.error);
+  private async incrementRedisCounter(key: string, amount: number): Promise<void> {
+    if (!this.redis) {
+      return;
     }
+
+    const ttl = this.secondsUntilTomorrow();
+    await this.redis
+      .multi()
+      .incrby(key, amount)
+      .expire(key, ttl)
+      .exec()
+      .catch((err) => {
+        console.error('Failed to update budget counter in Redis:', err);
+      });
   }
 
-  private getOrdersToday(): number {
-    return this.getRedisValue(this.ordersKey());
-  }
-
-  private incrementOrders(): void {
-    if (this.redis) {
-      this.redis.incr(this.ordersKey()).catch(console.error);
+  private parseCounter(value: string | null): number {
+    if (!value) {
+      return 0;
     }
+
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
   }
 
-  private getKisCallsToday(): number {
-    return this.getRedisValue(this.kisCallsKey());
-  }
+  private async hydrateFromRedis(): Promise<void> {
+    if (!this.redis) {
+      return;
+    }
 
-  private getRedisValue(key: string): number {
-    if (!this.redis) return 0;
-    // Synchronous access would need different approach, using cached values
-    return 0;
+    try {
+      const [aiCalls, aiCost, orders, kisCalls] = await this.redis.mget(
+        this.aiCallsKey(),
+        this.aiCostKey(),
+        this.ordersKey(),
+        this.kisCallsKey()
+      );
+
+      this.counters.aiCalls = this.parseCounter(aiCalls);
+      this.counters.aiCostKrw = this.parseCounter(aiCost);
+      this.counters.orders = this.parseCounter(orders);
+      this.counters.kisCalls = this.parseCounter(kisCalls);
+    } catch (err) {
+      console.error('Failed to hydrate budget counters from Redis:', err);
+    }
   }
 
   // ==================== Kill Switch ====================
@@ -194,15 +295,17 @@ export class BudgetManager {
   // ==================== Status ====================
 
   getStatus(): BudgetStatus {
+    this.ensureCurrentDate();
+
     return {
-      date: this.todayKey(),
-      aiCalls: this.getAiCallsToday(),
+      date: this.counters.date,
+      aiCalls: this.counters.aiCalls,
       aiCallsLimit: this.budget.maxAiCallsPerDay,
-      aiCostKrw: this.getAiCostToday(),
+      aiCostKrw: this.counters.aiCostKrw,
       aiCostLimit: this.budget.maxAiCostEstKrwPerDay,
-      orders: this.getOrdersToday(),
+      orders: this.counters.orders,
       ordersLimit: this.budget.maxOrdersPerDay,
-      kisCalls: this.getKisCallsToday(),
+      kisCalls: this.counters.kisCalls,
       kisCallsLimit: this.budget.maxKisRestCallsPerDay,
       killSwitchActive: this.killSwitch,
     };

@@ -39,6 +39,7 @@ export interface BudgetConfig {
   maxAiCallsPerDay: number;
   maxAiCostEstKrwPerDay: number;
   maxKisRestCallsPerDay: number;
+  maxOrdersPerDay: number;
   killSwitchOnBudgetExceeded: boolean;
 }
 
@@ -74,6 +75,7 @@ export const PolicyPresets = {
         maxAiCallsPerDay: 50,
         maxAiCostEstKrwPerDay: 1000,
         maxKisRestCallsPerDay: 8000,
+        maxOrdersPerDay: 10,
         killSwitchOnBudgetExceeded: true,
       },
     };
@@ -107,6 +109,7 @@ export const PolicyPresets = {
         maxAiCallsPerDay: 200,
         maxAiCostEstKrwPerDay: 3000,
         maxKisRestCallsPerDay: 20000,
+        maxOrdersPerDay: 40,
         killSwitchOnBudgetExceeded: true,
       },
     };
@@ -140,6 +143,7 @@ export const PolicyPresets = {
         maxAiCallsPerDay: 800,
         maxAiCostEstKrwPerDay: 10000,
         maxKisRestCallsPerDay: 50000,
+        maxOrdersPerDay: 120,
         killSwitchOnBudgetExceeded: true,
       },
     };
