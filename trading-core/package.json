@@ -8,66 +8,34 @@
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "test": "jest",
-    "test:watch": "jest --watch"
-  },
-  "dependencies": {
-    "typeorm": "^0.3.19",
-    "pg": "^8.11.3",
-    "ioredis": "^5.3.2",
-    "axios": "^1.6.2",
-    "express": "^4.18.2",
-    "joi": "^17.11.0",
-    "yaml": "^2.3.4",
-    "uuid": "^9.0.1",
-    "dotenv": "^16.3.1",
-    "winston": "^3.11.0",
-    "node-cron": "^3.0.3",
-    "reflect-metadata": "^0.1.13"
-  },
-  "devDependencies": {
-    "@types/express": "^4.17.21",
-    "@types/node": "^20.10.4",
-    "@types/uuid": "^9.0.7",
-    "@types/node-cron": "^3.0.11",
-    "@types/jest": "^29.5.11",
-    "typescript": "^5.3.3",
-    "ts-node": "^10.9.2",
-    "jest": "^29.7.0",
-    "ts-jest": "^29.1.1"
-  }
-}
-  "name": "trading-core",
-  "version": "0.1.0",
-  "description": "AutoTrade Trading Core - KIS Gateway + Policy/Risk + Order Engine",
-  "main": "dist/index.js",
-  "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts",
+    "test:watch": "jest --watch",
     "typeorm": "typeorm-ts-node-commonjs",
     "migration:run": "typeorm-ts-node-commonjs migration:run",
     "migration:generate": "typeorm-ts-node-commonjs migration:generate"
   },
   "dependencies": {
-    "typeorm": "^0.3.19",
-    "pg": "^8.11.3",
-    "ioredis": "^5.3.2",
     "axios": "^1.6.2",
-    "express": "^4.18.2",
-    "joi": "^17.11.0",
-    "yaml": "^2.3.4",
-    "uuid": "^9.0.1",
     "dotenv": "^16.3.1",
-    "winston": "^3.11.0",
+    "express": "^4.18.2",
+    "ioredis": "^5.3.2",
+    "joi": "^17.11.0",
     "node-cron": "^3.0.3",
-    "reflect-metadata": "^0.1.13"
+    "pg": "^8.11.3",
+    "reflect-metadata": "^0.1.13",
+    "typeorm": "^0.3.19",
+    "uuid": "^9.0.1",
+    "winston": "^3.11.0",
+    "yaml": "^2.3.4"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
+    "@types/jest": "^29.5.11",
     "@types/node": "^20.10.4",
-    "@types/uuid": "^9.0.7",
     "@types/node-cron": "^3.0.11",
-    "typescript": "^5.3.3",
-    "ts-node": "^10.9.2"
+    "@types/uuid": "^9.0.7",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
   }
 }

@@ -1,0 +1,17 @@
+{
+  "name": "autotrade",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AutoTrade monorepo workspace",
+  "packageManager": "pnpm@10.17.1",
+  "scripts": {
+    "preinstall": "npx only-allow pnpm",
+    "build": "pnpm -r run build",
+    "test": "pnpm -r run test",
+    "dev:trading-core": "pnpm --filter trading-core dev",
+    "dev:ai-brain": "pnpm --filter ai-brain dev"
+  },
+  "devDependencies": {
+    "only-allow": "^1.2.1"
+  }
+}
