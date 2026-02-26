@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
-import { BaseStrategy, Signal, createStrategy, MarketData, Position } from './strategies';
+import { BaseStrategy, Signal, createStrategy, MarketData, Position } from '../strategies';
 
 interface IntentRequest {
   strategyId: string;
@@ -50,11 +50,17 @@ export class IntentGenerator {
     }
 
     // Convert signal to intent request
+    const intentQty = this.calculatePositionSize(marketData, signal);
+    if (intentQty <= 0) {
+      console.warn(`Skip intent due to invalid position size: symbol=${signal.symbol}, price=${marketData.currentPrice}`);
+      return null;
+    }
+
     const intent: IntentRequest = {
       strategyId: signal.strategyId,
       symbol: signal.symbol,
       side: signal.action as 'BUY' | 'SELL',
-      intentQty: this.calculatePositionSize(marketData, signal),
+      intentQty,
       orderType: 'LIMIT',
       limitPrice: marketData.currentPrice,
       timeInForceSec: 120,
@@ -73,6 +79,11 @@ export class IntentGenerator {
     // Simplified - in production, use proper risk management
     const maxPositionValue = 1000000; // 1M KRW max per trade
     const price = marketData.currentPrice;
+
+    if (!Number.isFinite(price) || price <= 0) {
+      return 0;
+    }
+
     return Math.floor(maxPositionValue / price);
   }
 
