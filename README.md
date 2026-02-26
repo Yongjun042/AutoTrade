@@ -9,6 +9,9 @@
 - AI Brain: 전략 실행, Intent 생성, 로컬 LLM (Ollama) 연동
 - Dashboard: 실시간 모니터링 및 제어
 
+**패키지 매니저 정책:**
+- 표준은 `pnpm` (workspace 기반)
+
 ## 프로젝트 구조
 
 ```
@@ -78,8 +81,10 @@ AutoTrade/
 ### Dashboard
 - Kill Switch 제어
 - Budget 모니터링
+- Open Positions 모니터링
 - Recent Intents/Orders 확인
-- Policy 프리셋 전환
+- Policy 프리셋 전환 (API 연동)
+- KIS 모의계좌(VTS) 연결 테스트 실행/결과 확인
 - Auto-refresh (5초)
 
 ## 실행 방법
@@ -87,13 +92,12 @@ AutoTrade/
 ### 1. 의존성 설치
 
 ```bash
-# Trading Core
-cd trading-core
-npm install
+# 권장 (pnpm 전환 완료 후)
+pnpm install -r
 
-# AI Brain
-cd ../ai-brain
-npm install
+# 현재 호환 방식
+cd trading-core && npm install
+cd ../ai-brain && npm install
 ```
 
 ### 2. 환경 설정
@@ -104,6 +108,8 @@ cp config/trading-core.env.example trading-core/.env
 cp config/ai-brain.env.example ai-brain/.env
 
 # .env 파일 편집 (KIS API 키 입력)
+# - trading-core/.env 에 POLICY_PRESET=neutral (기본) 설정 가능
+# - 모의계좌 테스트 기능 사용 시 trading-core/.env 에 KIS_ENV=VTS 설정
 ```
 
 ### 3. 데이터베이스
@@ -122,13 +128,13 @@ docker run -d \
 ### 4. 실행
 
 ```bash
-# Trading Core
-cd trading-core
-npm run dev
+# 권장 (pnpm 전환 완료 후)
+pnpm --filter trading-core dev
+pnpm --filter ai-brain dev
 
-# AI Brain (다른 터미널)
-cd ai-brain
-npm run dev
+# 현재 호환 방식
+cd trading-core && npm run dev
+cd ../ai-brain && npm run dev
 ```
 
 ### 5. 대시보드 접근
@@ -190,8 +196,20 @@ systemctl --user start tradebot-ai-brain
 | GET | /api/orders | 주문 목록 |
 | GET | /api/events | 이벤트 로그 |
 | GET | /api/budget | Budget 상태 |
+| GET | /api/policy | 현재 정책 프리셋 |
+| GET | /api/kis/mock-test/status | KIS 모의계좌 테스트 상태 |
 | POST | /api/killswitch/activate | Kill Switch 활성화 |
 | POST | /api/killswitch/deactivate | Kill Switch 비활성화 |
+| POST | /api/policy/preset | 정책 프리셋 전환 |
+| POST | /api/kis/mock-test/run | KIS 모의계좌 테스트 실행 (VTS 전용) |
+
+추가 규약:
+- Trading Core 에러 응답은 `application/problem+json` 기반 (`message` 호환 필드 포함)
+- `/api/intents`는 입력 유효성 검증 후 잘못된 요청에 `400`을 반환
+- Policy 프리셋 전환 시 Risk + Budget 한도가 함께 동기화됨
+- 목록 조회 API(`intents/orders/events/positions`)는 `?limit=` 지원, `intents/orders/events`는 `?cursor=`/`?since=`와 `X-Next-Cursor` 지원
+- `GET /api/intents` 응답에는 거절 사유 요약 필드 `riskReasonCodes`가 포함될 수 있음
+- `POST /api/kis/mock-test/run`은 `KIS_ENV=VTS`에서만 실행 가능하며 토큰/잔고 조회 기반의 안전한 읽기 테스트를 수행
 
 ### AI Brain (`:3001`)
 
@@ -202,7 +220,14 @@ systemctl --user start tradebot-ai-brain
 | POST | /api/ideas | 거래 아이디어 생성 |
 | POST | /api/analyze | 시장 분석 |
 | POST | /api/report | 일일 리포트 생성 |
+| POST | /api/explain | 거래 결과 설명 |
 | POST | /api/cycle | 전략 사이클 실행 |
+
+## CI
+
+- GitHub Actions: `.github/workflows/ci.yml`
+- 트리거: `main` push, pull request
+- 실행 항목: `pnpm install --frozen-lockfile` -> `pnpm build` -> `pnpm test`
 
 ## 개발 로드맵
 
