@@ -352,6 +352,14 @@ pnpm --filter ai-brain build
 
 ## 14. 운영 런북 (요약)
 
+### 14.0 로컬 개발 실행/종료
+
+- `.env` 파일은 `trading-core/.env`, `ai-brain/.env`에 배치하고 서비스 시작 시 로드한다.
+- 로컬 실행 최소 요건은 PostgreSQL 1개이며 Redis는 선택 사항이다.
+- 기본 실행 포트는 `trading-core:8080`, `ai-brain:3001`이다.
+- 포트 충돌 시 `PORT=18080 pnpm --filter trading-core dev`처럼 우회하고, `TRADING_CORE_URL`도 동일 포트로 동기화한다.
+- 종료 시 서비스 프로세스를 먼저 중단하고(`Ctrl + C`), 이후 `docker stop tradebot-postgres`로 DB를 정리한다.
+
 ### 14.1 장 시작 전
 
 - 토큰 상태 확인

@@ -92,55 +92,71 @@ AutoTrade/
 ### 1. 의존성 설치
 
 ```bash
-# 권장 (pnpm 전환 완료 후)
 pnpm install -r
-
-# 현재 호환 방식
-cd trading-core && npm install
-cd ../ai-brain && npm install
 ```
 
-### 2. 환경 설정
+### 2. 환경 파일 생성
 
 ```bash
-# 설정 파일 복사
 cp config/trading-core.env.example trading-core/.env
 cp config/ai-brain.env.example ai-brain/.env
-
-# .env 파일 편집 (KIS API 키 입력)
-# - trading-core/.env 에 POLICY_PRESET=neutral (기본) 설정 가능
-# - 모의계좌 테스트 기능 사용 시 trading-core/.env 에 KIS_ENV=VTS 설정
 ```
 
-### 3. 데이터베이스
+필수 확인값:
+- `trading-core/.env`
+  - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
+  - `KIS_APP_KEY`, `KIS_APP_SECRET`, `KIS_ACCOUNT_NO`
+  - 모의계좌 테스트 시 `KIS_ENV=VTS`
+- `ai-brain/.env`
+  - `TRADING_CORE_URL` (기본: `http://localhost:8080`)
 
-PostgreSQL 실행 (Docker):
+### 3. PostgreSQL 실행 (필수)
+
 ```bash
 docker run -d \
   --name tradebot-postgres \
   -e POSTGRES_USER=tradebot \
-  -e POSTGRES_PASSWORD=your_password \
+  -e POSTGRES_PASSWORD=tradebot \
   -e POSTGRES_DB=tradebot \
   -p 5432:5432 \
   postgres:16
 ```
 
-### 4. 실행
+### 4. 서비스 실행
 
 ```bash
-# 권장 (pnpm 전환 완료 후)
+# 터미널 1
 pnpm --filter trading-core dev
+
+# 터미널 2
 pnpm --filter ai-brain dev
-
-# 현재 호환 방식
-cd trading-core && npm run dev
-cd ../ai-brain && npm run dev
 ```
 
-### 5. 대시보드 접근
+포트 충돌 시(`8080` 이미 사용 중):
 
+```bash
+PORT=18080 pnpm --filter trading-core dev
 ```
-http://localhost:8080
+
+그리고 `ai-brain/.env`의 `TRADING_CORE_URL`을 `http://localhost:18080`으로 맞춘다.
+
+### 5. 접속 URL
+
+- 대시보드: `http://localhost:8080` (또는 변경한 포트)
+- Trading Core 헬스체크: `http://localhost:8080/health`
+- AI Brain 헬스체크: `http://localhost:3001/health`
+
+### 6. 종료/정리
+
+서비스 종료:
+- 실행 중인 터미널에서 `Ctrl + C`
+
+DB 정리:
+
+```bash
+docker stop tradebot-postgres
+# 필요 시 완전 삭제
+docker rm tradebot-postgres
 ```
 
 ## 테스트 실행
