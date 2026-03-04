@@ -2,6 +2,9 @@ import express, { Request, Response } from 'express';
 import { createStrategy, BaseStrategy, MarketData, Position } from './strategies';
 import { OllamaClient } from './llm/OllamaClient';
 import { IntentGenerator } from './intent/IntentGenerator';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const app = express();
 app.use(express.json());

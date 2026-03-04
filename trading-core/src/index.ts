@@ -2,6 +2,9 @@ import express, { Express, Request, Response } from 'express';
 import { DataSource, LessThan, MoreThan } from 'typeorm';
 import 'reflect-metadata';
 import * as path from 'path';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 import { TradeIntent, TradeIntentSide, TradeIntentOrderType, TradeIntentStatus } from './domain/TradeIntent';
 import { Order, OrderState } from './domain/Order';
